@@ -1,0 +1,268 @@
+
+name: Build VideoStarTool ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build dylib on macOS 14
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate project files
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p .github/workflows
+
+          cat > control <<'EOF'
+          Package: com.hoanghiep.videostartool
+          Name: VideoStarTool
+          Version: 0.1.0
+          Architecture: iphoneos-arm
+          Description: VideoStarTool
+          Maintainer: Hoang Hiep
+          Author: Hoang Hiep
+          Section: Tweaks
+          EOF
+
+          cat > Makefile <<'EOF'
+          TARGET := iphone:clang:latest:14.0
+          ARCHS := arm64
+          DEBUG := 0
+          FINALPACKAGE := 1
+
+          include $(THEOS)/makefiles/common.mk
+
+          TWEAK_NAME := VideoStarTool
+
+          VideoStarTool_FILES := Tweak.xm
+          VideoStarTool_CFLAGS := -fobjc-arc -Wno-deprecated-declarations
+          VideoStarTool_FRAMEWORKS := UIKit Foundation QuartzCore
+
+          include $(THEOS_MAKE_PATH)/tweak.mk
+          EOF
+
+          cat > Tweak.xm <<'EOF'
+          #import <UIKit/UIKit.h>
+          #import <QuartzCore/QuartzCore.h>
+
+          static NSArray<NSString *> *VSTFeatures(void) {
+              return @[
+                  @"Auto Nhập Ảnh Vào Các Lớp Hình Ảnh",
+                  @"Hiển Thị Code Gần Nhất Từng Nhập",
+                  @"Auto Chia Beat",
+                  @"Auto Nhập Code Và Ảnh Vào Các Phân Cảnh"
+              ];
+          }
+
+          @interface VSTOverlay : NSObject
+          @property(nonatomic,strong) UIWindow *window;
+          @property(nonatomic,strong) UIView *panel;
+          + (instancetype)shared;
+          - (void)show;
+          @end
+
+          @implementation VSTOverlay
+
+          + (instancetype)shared {
+              static VSTOverlay *instance;
+              static dispatch_once_t once;
+              dispatch_once(&once, ^{
+                  instance = [VSTOverlay new];
+              });
+              return instance;
+          }
+
+          - (UIWindow *)activeWindow {
+              for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+                  if (scene.activationState == UISceneActivationStateForegroundActive &&
+                      [scene isKindOfClass:UIWindowScene.class]) {
+                      return [[UIWindow alloc]
+                          initWithWindowScene:(UIWindowScene *)scene];
+                  }
+              }
+              return [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+          }
+
+          - (void)show {
+              if (self.window) return;
+
+              self.window = [self activeWindow];
+              self.window.windowLevel = UIWindowLevelAlert + 2;
+              self.window.backgroundColor = UIColor.clearColor;
+
+              UIViewController *root = [UIViewController new];
+              root.view.backgroundColor = UIColor.clearColor;
+              self.window.rootViewController = root;
+
+              UIButton *floating = [UIButton buttonWithType:UIButtonTypeSystem];
+              floating.frame = CGRectMake(18, 180, 58, 58);
+              floating.layer.cornerRadius = 29;
+              floating.backgroundColor = [UIColor colorWithRed:0.20 green:0.08 blue:0.34 alpha:0.98];
+              floating.layer.borderWidth = 1.5;
+              floating.layer.borderColor = [UIColor colorWithRed:0.67 green:0.38 blue:1 alpha:1].CGColor;
+              [floating setTitle:@"★\nVST" forState:UIControlStateNormal];
+              [floating setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+              floating.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+              floating.titleLabel.numberOfLines = 2;
+              [floating addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
+              [root.view addSubview:floating];
+
+              CGFloat width = MIN(UIScreen.mainScreen.bounds.size.width - 36, 360);
+
+              self.panel = [[UIView alloc] initWithFrame:CGRectMake(18, 245, width, 360)];
+              self.panel.backgroundColor = [UIColor colorWithRed:0.055 green:0.035 blue:0.085 alpha:0.98];
+              self.panel.layer.cornerRadius = 18;
+              self.panel.layer.borderWidth = 1;
+              self.panel.layer.borderColor = [UIColor colorWithRed:0.48 green:0.25 blue:0.78 alpha:1].CGColor;
+              self.panel.hidden = YES;
+              [root.view addSubview:self.panel];
+
+              UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, width - 32, 25)];
+              title.text = @"VideoStarTool";
+              title.textColor = UIColor.whiteColor;
+              title.font = [UIFont boldSystemFontOfSize:20];
+              [self.panel addSubview:title];
+
+              UILabel *owner = [[UILabel alloc] initWithFrame:CGRectMake(17, 38, width - 32, 18)];
+              owner.text = @"Hoàng Hiệp";
+              owner.textColor = [UIColor colorWithRed:0.75 green:0.62 blue:0.92 alpha:1];
+              owner.font = [UIFont systemFontOfSize:12];
+              [self.panel addSubview:owner];
+
+              UILabel *tab = [[UILabel alloc] initWithFrame:CGRectMake(16, 68, 100, 24)];
+              tab.text = @"Function";
+              tab.textColor = [UIColor colorWithRed:0.82 green:0.65 blue:1 alpha:1];
+              tab.font = [UIFont boldSystemFontOfSize:15];
+              [self.panel addSubview:tab];
+
+              NSArray *features = VSTFeatures();
+
+              for (NSUInteger i = 0; i < features.count; i++) {
+                  UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+                  button.frame = CGRectMake(14, 101 + (CGFloat)i * 57, width - 28, 48);
+                  button.tag = i;
+                  button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+                  button.contentEdgeInsets = UIEdgeInsetsMake(0, 13, 0, 10);
+                  button.backgroundColor = [UIColor colorWithRed:0.13 green:0.075 blue:0.20 alpha:1];
+                  button.layer.cornerRadius = 10;
+                  [button setTitle:features[i] forState:UIControlStateNormal];
+                  [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+                  button.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+                  button.titleLabel.numberOfLines = 2;
+                  [button addTarget:self action:@selector(featureTapped:) forControlEvents:UIControlEventTouchUpInside];
+                  [self.panel addSubview:button];
+              }
+
+              self.window.hidden = NO;
+          }
+
+          - (void)togglePanel {
+              self.panel.hidden = !self.panel.hidden;
+          }
+
+          - (void)featureTapped:(UIButton *)sender {
+              NSString *name = VSTFeatures()[sender.tag];
+
+              UIAlertController *alert =
+                  [UIAlertController alertControllerWithTitle:name
+                                                      message:@"Giao diện prototype đã được nạp. Chức năng gốc chưa được khôi phục hoặc xác minh."
+                                               preferredStyle:UIAlertControllerStyleAlert];
+
+              [alert addAction:[UIAlertAction actionWithTitle:@"Đóng"
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:nil]];
+
+              [self.window.rootViewController presentViewController:alert
+                                                           animated:YES
+                                                         completion:nil];
+          }
+
+          @end
+
+          %ctor {
+              @autoreleasepool {
+                  dispatch_async(dispatch_get_main_queue(), ^{
+                      [[NSNotificationCenter defaultCenter]
+                          addObserverForName:UIApplicationDidBecomeActiveNotification
+                                      object:nil
+                                       queue:NSOperationQueue.mainQueue
+                                  usingBlock:^(__unused NSNotification *notification) {
+                          [[VSTOverlay shared] show];
+                      }];
+
+                      if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive) {
+                          [[VSTOverlay shared] show];
+                      }
+                  });
+              }
+          }
+          EOF
+
+      - name: Install Theos and dependencies
+        shell: bash
+        run: |
+          set -e
+
+          brew install ldid dpkg
+
+          git clone --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          git clone --depth 1 https://github.com/theos/sdks.git "$HOME/theos/sdks"
+
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Build ARM64 dylib
+        shell: bash
+        run: |
+          set -e
+
+          export THEOS="$HOME/theos"
+
+          make clean
+          make package FINALPACKAGE=1
+
+      - name: Verify dylib
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-output
+
+          DYLIB="$(find .theos -type f -name 'VideoStarTool.dylib' -print -quit)"
+
+          if [ -z "$DYLIB" ]; then
+            echo "ERROR: VideoStarTool.dylib not found"
+            find .theos -type f || true
+            exit 1
+          fi
+
+          cp "$DYLIB" build-output/VideoStarTool.dylib
+
+          test -s build-output/VideoStarTool.dylib
+
+          file build-output/VideoStarTool.dylib
+
+          xcrun lipo -info build-output/VideoStarTool.dylib
+
+          xcrun lipo -verify_arch arm64 build-output/VideoStarTool.dylib
+
+      - name: Upload ARM64 dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStarTool-ARM64-dylib
+          path: build-output/VideoStarTool.dylib
+          if-no-files-found: error
+          retention-days: 14
