@@ -1,5 +1,6 @@
 name: Build VideoStarTool
-'on':
+
+on:
   workflow_dispatch:
   push:
     paths:
@@ -7,7 +8,8 @@ name: Build VideoStarTool
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,29 +23,41 @@ jobs:
         run: |
           git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
           git clone https://github.com/theos/sdks.git "$HOME/theos-sdks"
+
           mkdir -p "$HOME/theos/sdks"
+
           SDK="$(find "$HOME/theos-sdks" -maxdepth 1 -type d -name 'iPhoneOS*.sdk' | sort -V | tail -n 1)"
-          test -n "$SDK"
+
+          if [ -z "$SDK" ]; then
+            echo "ERROR: iOS SDK not found"
+            exit 1
+          fi
+
           cp -R "$SDK" "$HOME/theos/sdks/"
+
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           echo "THEOS_PACKAGE_SCHEME=rootless" >> "$GITHUB_ENV"
 
-      - name: Create tweak project from this workflow
+      - name: Create tweak project
         run: |
-          cat > "$GITHUB_WORKSPACE/Makefile" <<'MAKEFILE'
+          cat > Makefile <<'MAKEFILE'
           TARGET = iphone:clang:latest:17.2
           ARCHS = arm64
           THEOS_PACKAGE_SCHEME = rootless
+
           include $(THEOS)/makefiles/common.mk
+
           TWEAK_NAME = VideoStarTool
+
           VideoStarTool_FILES = Tweak.xm
           VideoStarTool_FRAMEWORKS = UIKit Foundation Photos AVFoundation
           VideoStarTool_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
           VideoStarTool_PLIST = VideoStarTool.plist
+
           include $(THEOS_MAKE_PATH)/tweak.mk
           MAKEFILE
 
-          cat > "$GITHUB_WORKSPACE/control" <<'CONTROL'
+          cat > control <<'CONTROL'
           Package: com.hoanghiep.videostartool
           Name: VideoStarTool
           Version: 2.0.0
@@ -55,7 +69,7 @@ jobs:
           Depends: mobilesubstrate
           CONTROL
 
-          cat > "$GITHUB_WORKSPACE/VideoStarTool.plist" <<'PLIST'
+          cat > VideoStarTool.plist <<'PLIST'
           {
             Filter = {
               Bundles = ("com.frontierdesign.videostar");
@@ -63,7 +77,7 @@ jobs:
           }
           PLIST
 
-          cat > "$GITHUB_WORKSPACE/Tweak.xm" <<'SOURCE'
+          cat > Tweak.xm <<'SOURCE'
           #import <UIKit/UIKit.h>
           #import <Photos/Photos.h>
           #import <AVFoundation/AVFoundation.h>
@@ -72,8 +86,12 @@ jobs:
           #import <string.h>
           #import <math.h>
 
-          static NSString * const VSTLastCodeKey = @"com.hoanghiep.videostartool.lastCode";
-          static NSString * const VSTLastCodeImageKey = @"com.hoanghiep.videostartool.lastCodeImage";
+          static NSString * const VSTLastCodeKey =
+              @"com.hoanghiep.videostartool.lastCode";
+
+          static NSString * const VSTLastCodeImageKey =
+              @"com.hoanghiep.videostartool.lastCodeImage";
+
           static UIWindow *VSTWindow;
           static UIView *VSTPanel;
           static UILabel *VSTStatus;
@@ -84,791 +102,1136 @@ jobs:
           @end
 
           @implementation VSTOverlayWindow
-          - (BOOL)canBecomeKeyWindow { return NO; }
+
+          - (BOOL)canBecomeKeyWindow {
+              return NO;
+          }
 
           - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-              UIView *hit=[super hitTest:point withEvent:event];
-              if (hit==self.rootViewController.view) return nil;
+              UIView *hit = [super hitTest:point withEvent:event];
+
+              if (hit == self.rootViewController.view) {
+                  return nil;
+              }
+
               return hit;
           }
+
           @end
 
           static id VSTCall(id obj, NSString *selName) {
-              SEL s = NSSelectorFromString(selName);
-              if (!obj || ![obj respondsToSelector:s]) return nil;
-              return ((id(*)(id,SEL))objc_msgSend)(obj,s);
+              SEL selector = NSSelectorFromString(selName);
+
+              if (!obj || ![obj respondsToSelector:selector]) {
+                  return nil;
+              }
+
+              return ((id(*)(id, SEL))objc_msgSend)(obj, selector);
           }
 
           static BOOL VSTBool(id obj, NSString *selName) {
-              SEL s = NSSelectorFromString(selName);
-              if (!obj || ![obj respondsToSelector:s]) return NO;
-              return ((BOOL(*)(id,SEL))objc_msgSend)(obj,s);
+              SEL selector = NSSelectorFromString(selName);
+
+              if (!obj || ![obj respondsToSelector:selector]) {
+                  return NO;
+              }
+
+              return ((BOOL(*)(id, SEL))objc_msgSend)(obj, selector);
           }
 
-          static void VSTSetStatus(NSString *s) {
+          static void VSTSetStatus(NSString *message) {
               dispatch_async(dispatch_get_main_queue(), ^{
-                  VSTStatus.text = s ?: @"";
+                  VSTStatus.text = message ?: @"";
               });
           }
 
           static UIViewController *VSTTopController(void) {
-              UIWindow *w = nil;
+              UIWindow *window = nil;
+
               for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-                  if (![scene isKindOfClass:UIWindowScene.class]) continue;
+                  if (![scene isKindOfClass:UIWindowScene.class]) {
+                      continue;
+                  }
+
                   for (UIWindow *candidate in ((UIWindowScene *)scene).windows) {
                       if (candidate.isKeyWindow) {
-                          w = candidate;
+                          window = candidate;
                           break;
                       }
                   }
-                  if (w) break;
+
+                  if (window) {
+                      break;
+                  }
               }
 
-              UIViewController *vc = w.rootViewController;
-              while (vc.presentedViewController) vc = vc.presentedViewController;
+              UIViewController *controller = window.rootViewController;
 
-              while ([vc isKindOfClass:UINavigationController.class] &&
-                     ((UINavigationController *)vc).topViewController) {
-                  vc = ((UINavigationController *)vc).topViewController;
+              while (controller.presentedViewController) {
+                  controller = controller.presentedViewController;
               }
-              return vc;
+
+              while ([controller isKindOfClass:UINavigationController.class] &&
+                     ((UINavigationController *)controller).topViewController) {
+                  controller = ((UINavigationController *)controller).topViewController;
+              }
+
+              return controller;
           }
 
           static UIView *VSTFindView(UIView *root, NSString *className) {
-              if (!root) return nil;
-              if ([NSStringFromClass(root.class) isEqualToString:className]) return root;
+              if (!root) {
+                  return nil;
+              }
+
+              if ([NSStringFromClass(root.class) isEqualToString:className]) {
+                  return root;
+              }
 
               for (UIView *child in root.subviews) {
-                  UIView *found=VSTFindView(child,className);
-                  if (found) return found;
+                  UIView *found = VSTFindView(child, className);
+
+                  if (found) {
+                      return found;
+                  }
               }
+
               return nil;
           }
 
           static id VSTActiveProject(void) {
-              Class pm = NSClassFromString(@"Video_Star.ProjectManager");
-              if (!pm) pm = NSClassFromString(@"_TtC10Video_Star14ProjectManager");
+              Class managerClass = NSClassFromString(@"Video_Star.ProjectManager");
 
-              SEL shared = NSSelectorFromString(@"sharedInstance");
-              if (!pm || ![pm respondsToSelector:shared]) return nil;
+              SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
 
-              id manager = ((id(*)(id,SEL))objc_msgSend)(pm,shared);
-              return VSTCall(manager,@"activeEditProject");
-          }
-
-          static UIViewController *VSTFindEditorController(UIViewController *vc) {
-              if (!vc) return nil;
-
-              if ([NSStringFromClass(vc.class) containsString:@"MultiLayerNavController"]) {
-                  return vc;
+              if (!managerClass ||
+                  ![managerClass respondsToSelector:sharedSelector]) {
+                  return nil;
               }
 
-              UIViewController *found=VSTFindEditorController(vc.presentedViewController);
-              if (found) return found;
+              id manager = ((id(*)(id, SEL))objc_msgSend)(
+                  managerClass,
+                  sharedSelector
+              );
 
-              if ([vc isKindOfClass:UINavigationController.class]) {
+              return VSTCall(manager, @"activeEditProject");
+          }
+
+          static UIViewController *VSTFindEditorController(
+              UIViewController *controller
+          ) {
+              if (!controller) {
+                  return nil;
+              }
+
+              if ([NSStringFromClass(controller.class)
+                   containsString:@"MultiLayerNavController"]) {
+                  return controller;
+              }
+
+              UIViewController *found =
+                  VSTFindEditorController(controller.presentedViewController);
+
+              if (found) {
+                  return found;
+              }
+
+              if ([controller isKindOfClass:UINavigationController.class]) {
                   for (UIViewController *child in
-                       ((UINavigationController *)vc).viewControllers.reverseObjectEnumerator) {
-                      found=VSTFindEditorController(child);
-                      if (found) return found;
+                       ((UINavigationController *)controller)
+                       .viewControllers.reverseObjectEnumerator) {
+                      found = VSTFindEditorController(child);
+
+                      if (found) {
+                          return found;
+                      }
                   }
               }
 
-              if ([vc isKindOfClass:UITabBarController.class]) {
-                  return VSTFindEditorController(((UITabBarController *)vc).selectedViewController);
+              for (UIViewController *child in controller.childViewControllers) {
+                  found = VSTFindEditorController(child);
+
+                  if (found) {
+                      return found;
+                  }
               }
 
-              for (UIViewController *child in vc.childViewControllers) {
-                  found=VSTFindEditorController(child);
-                  if (found) return found;
-              }
               return nil;
           }
 
           static id VSTActiveEditor(void) {
               for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-                  if (![scene isKindOfClass:UIWindowScene.class]) continue;
+                  if (![scene isKindOfClass:UIWindowScene.class]) {
+                      continue;
+                  }
 
                   for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-                      if (!window.isKeyWindow || window==VSTWindow) continue;
+                      if (!window.isKeyWindow || window == VSTWindow) {
+                          continue;
+                      }
 
-                      UIViewController *found=VSTFindEditorController(window.rootViewController);
-                      if (found) return found;
+                      UIViewController *found =
+                          VSTFindEditorController(window.rootViewController);
+
+                      if (found) {
+                          return found;
+                      }
                   }
               }
+
               return nil;
           }
 
-          static void VSTButton(UIView *host, NSString *title, CGFloat y, SEL action, id target) {
-              UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-              b.frame = CGRectMake(14,y,host.bounds.size.width-28,42);
-              b.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-              b.backgroundColor = [UIColor colorWithRed:0.28 green:0.15 blue:0.48 alpha:1];
-              b.layer.cornerRadius = 10;
-              [b setTitle:title forState:UIControlStateNormal];
-              [b setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-              b.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-              [b addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
-              [host addSubview:b];
+          static void VSTButton(
+              UIView *host,
+              NSString *title,
+              CGFloat y,
+              SEL action,
+              id target
+          ) {
+              UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+
+              button.frame = CGRectMake(
+                  14,
+                  y,
+                  host.bounds.size.width - 28,
+                  42
+              );
+
+              button.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+
+              button.backgroundColor = [UIColor colorWithRed:0.28
+                                                        green:0.15
+                                                         blue:0.48
+                                                        alpha:1];
+
+              button.layer.cornerRadius = 10;
+
+              [button setTitle:title forState:UIControlStateNormal];
+
+              [button setTitleColor:UIColor.whiteColor
+                           forState:UIControlStateNormal];
+
+              button.titleLabel.font =
+                  [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+
+              [button addTarget:target
+                         action:action
+               forControlEvents:UIControlEventTouchUpInside];
+
+              [host addSubview:button];
           }
 
           @interface VSTController : NSObject
+
           + (instancetype)shared;
+
           - (void)show;
+          - (void)togglePanel;
+          - (void)dragBubble:(UIPanGestureRecognizer *)gesture;
+          - (void)refreshCodeLabel;
+
           - (void)feature1;
           - (void)feature3;
           - (void)feature4;
+
           @end
 
           @implementation VSTController
 
           + (instancetype)shared {
-              static VSTController *x;
-              static dispatch_once_t once;
-              dispatch_once(&once,^{ x=[VSTController new]; });
-              return x;
+              static VSTController *instance;
+              static dispatch_once_t onceToken;
+
+              dispatch_once(&onceToken, ^{
+                  instance = [VSTController new];
+              });
+
+              return instance;
           }
 
           - (void)show {
               dispatch_async(dispatch_get_main_queue(), ^{
-                  if (!VSTWindow) {
-                      UIWindowScene *ws = nil;
-
-                      for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
-                          if ([s isKindOfClass:UIWindowScene.class]) {
-                              ws=(id)s;
-                              break;
-                          }
-                      }
-
-                      if (!ws) return;
-
-                      VSTWindow = [[VSTOverlayWindow alloc] initWithWindowScene:ws];
-                      VSTWindow.frame = CGRectMake(0,0,
-                          UIScreen.mainScreen.bounds.size.width,
-                          UIScreen.mainScreen.bounds.size.height);
-                      VSTWindow.windowLevel = UIWindowLevelAlert + 2;
-                      VSTWindow.backgroundColor = UIColor.clearColor;
-
-                      UIViewController *root=[UIViewController new];
-                      root.view.backgroundColor=UIColor.clearColor;
-                      VSTWindow.rootViewController=root;
-
-                      UIButton *bubble=[UIButton buttonWithType:UIButtonTypeCustom];
-                      bubble.frame=CGRectMake(18,180,54,54);
-                      bubble.layer.cornerRadius=27;
-                      bubble.backgroundColor=[UIColor colorWithRed:.31 green:.13 blue:.56 alpha:.96];
-                      bubble.layer.borderWidth=1.5;
-                      bubble.layer.borderColor=[UIColor colorWithWhite:1 alpha:.7].CGColor;
-                      [bubble setTitle:@"VST" forState:UIControlStateNormal];
-                      bubble.titleLabel.font=[UIFont boldSystemFontOfSize:14];
-                      [bubble addTarget:self action:@selector(togglePanel)
-                       forControlEvents:UIControlEventTouchUpInside];
-                      [root.view addSubview:bubble];
-
-                      UIPanGestureRecognizer *pan =
-                          [[UIPanGestureRecognizer alloc] initWithTarget:self
-                                                                  action:@selector(dragBubble:)];
-                      [bubble addGestureRecognizer:pan];
-
-                      VSTPanel=[[UIView alloc] initWithFrame:CGRectMake(
-                          18,245,UIScreen.mainScreen.bounds.size.width-36,330)];
-                      VSTPanel.backgroundColor=[UIColor colorWithRed:.055 green:.045 blue:.085 alpha:.97];
-                      VSTPanel.layer.cornerRadius=18;
-                      VSTPanel.layer.borderWidth=1;
-                      VSTPanel.layer.borderColor=[UIColor colorWithRed:.48 green:.31 blue:.72 alpha:1].CGColor;
-                      VSTPanel.hidden=YES;
-                      [root.view addSubview:VSTPanel];
-
-                      UILabel *title=[[UILabel alloc] initWithFrame:CGRectMake(
-                          14,9,VSTPanel.bounds.size.width-28,25)];
-                      title.text=@"VideoStarTool";
-                      title.textColor=UIColor.whiteColor;
-                      title.font=[UIFont boldSystemFontOfSize:18];
-                      title.textAlignment=NSTextAlignmentCenter;
-                      [VSTPanel addSubview:title];
-
-                      UILabel *owner=[[UILabel alloc] initWithFrame:CGRectMake(
-                          14,33,VSTPanel.bounds.size.width-28,17)];
-                      owner.text=@"Hoàng Hiệp";
-                      owner.textColor=[UIColor colorWithWhite:.75 alpha:1];
-                      owner.font=[UIFont systemFontOfSize:11];
-                      owner.textAlignment=NSTextAlignmentCenter;
-                      [VSTPanel addSubview:owner];
-
-                      UILabel *tab=[[UILabel alloc] initWithFrame:CGRectMake(14,58,70,23)];
-                      tab.text=@"Function";
-                      tab.textColor=UIColor.whiteColor;
-                      tab.font=[UIFont boldSystemFontOfSize:13];
-                      [VSTPanel addSubview:tab];
-
-                      VSTCodeLabel=[[UILabel alloc] initWithFrame:CGRectMake(
-                          14,80,VSTPanel.bounds.size.width-28,28)];
-                      VSTCodeLabel.textColor=[UIColor colorWithWhite:.88 alpha:1];
-                      VSTCodeLabel.font=[UIFont systemFontOfSize:10];
-                      VSTCodeLabel.numberOfLines=1;
-                      VSTCodeLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;
-                      [VSTPanel addSubview:VSTCodeLabel];
-                      [self refreshCodeLabel];
-
-                      VSTButton(VSTPanel,@"1. Auto Nhập Ảnh Vào Các Lớp Hình Ảnh",
-                          114,@selector(feature1),self);
-                      VSTButton(VSTPanel,@"2. Hiển Thị Code Gần Nhất Từng Nhập",
-                          162,@selector(refreshCodeLabel),self);
-                      VSTButton(VSTPanel,@"3. Auto Chia Beat Nhạc Thông Minh",
-                          210,@selector(feature3),self);
-                      VSTButton(VSTPanel,@"4. Auto Nhập Code Và Ảnh Vào Các Phân Cảnh",
-                          258,@selector(feature4),self);
-
-                      VSTStatus=[[UILabel alloc] initWithFrame:CGRectMake(
-                          14,304,VSTPanel.bounds.size.width-28,20)];
-                      VSTStatus.text=@"Sẵn sàng";
-                      VSTStatus.textColor=[UIColor colorWithWhite:.72 alpha:1];
-                      VSTStatus.font=[UIFont systemFontOfSize:10];
-                      VSTStatus.textAlignment=NSTextAlignmentCenter;
-                      [VSTPanel addSubview:VSTStatus];
-
-                      [VSTWindow makeKeyAndVisible];
-                  } else {
-                      VSTWindow.hidden=NO;
+                  if (VSTWindow) {
+                      VSTWindow.hidden = NO;
+                      return;
                   }
+
+                  UIWindowScene *windowScene = nil;
+
+                  for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+                      if ([scene isKindOfClass:UIWindowScene.class]) {
+                          windowScene = (UIWindowScene *)scene;
+                          break;
+                      }
+                  }
+
+                  if (!windowScene) {
+                      return;
+                  }
+
+                  VSTWindow = [[VSTOverlayWindow alloc]
+                      initWithWindowScene:windowScene];
+
+                  VSTWindow.frame = UIScreen.mainScreen.bounds;
+                  VSTWindow.windowLevel = UIWindowLevelAlert + 2;
+                  VSTWindow.backgroundColor = UIColor.clearColor;
+
+                  UIViewController *root = [UIViewController new];
+
+                  root.view.backgroundColor = UIColor.clearColor;
+
+                  VSTWindow.rootViewController = root;
+
+                  UIButton *bubble = [UIButton buttonWithType:UIButtonTypeCustom];
+
+                  bubble.frame = CGRectMake(18, 180, 54, 54);
+                  bubble.layer.cornerRadius = 27;
+
+                  bubble.backgroundColor =
+                      [UIColor colorWithRed:0.31 green:0.13 blue:0.56 alpha:0.96];
+
+                  bubble.layer.borderWidth = 1.5;
+                  bubble.layer.borderColor =
+                      [UIColor colorWithWhite:1 alpha:0.7].CGColor;
+
+                  [bubble setTitle:@"VST" forState:UIControlStateNormal];
+
+                  bubble.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+
+                  [bubble addTarget:self
+                             action:@selector(togglePanel)
+                   forControlEvents:UIControlEventTouchUpInside];
+
+                  [root.view addSubview:bubble];
+
+                  UIPanGestureRecognizer *pan =
+                      [[UIPanGestureRecognizer alloc]
+                          initWithTarget:self
+                                  action:@selector(dragBubble:)];
+
+                  [bubble addGestureRecognizer:pan];
+
+                  CGFloat width = UIScreen.mainScreen.bounds.size.width - 36;
+
+                  VSTPanel = [[UIView alloc] initWithFrame:
+                      CGRectMake(18, 245, width, 330)];
+
+                  VSTPanel.backgroundColor =
+                      [UIColor colorWithRed:0.055 green:0.045 blue:0.085 alpha:0.97];
+
+                  VSTPanel.layer.cornerRadius = 18;
+                  VSTPanel.layer.borderWidth = 1;
+
+                  VSTPanel.layer.borderColor =
+                      [UIColor colorWithRed:0.48 green:0.31 blue:0.72 alpha:1].CGColor;
+
+                  VSTPanel.hidden = YES;
+
+                  [root.view addSubview:VSTPanel];
+
+                  UILabel *title = [[UILabel alloc]
+                      initWithFrame:CGRectMake(14, 9, width - 28, 25)];
+
+                  title.text = @"VideoStarTool";
+                  title.textColor = UIColor.whiteColor;
+                  title.font = [UIFont boldSystemFontOfSize:18];
+                  title.textAlignment = NSTextAlignmentCenter;
+
+                  [VSTPanel addSubview:title];
+
+                  UILabel *owner = [[UILabel alloc]
+                      initWithFrame:CGRectMake(14, 33, width - 28, 17)];
+
+                  owner.text = @"Hoàng Hiệp";
+                  owner.textColor = [UIColor colorWithWhite:0.75 alpha:1];
+                  owner.font = [UIFont systemFontOfSize:11];
+                  owner.textAlignment = NSTextAlignmentCenter;
+
+                  [VSTPanel addSubview:owner];
+
+                  UILabel *tab = [[UILabel alloc]
+                      initWithFrame:CGRectMake(14, 58, 100, 23)];
+
+                  tab.text = @"Function";
+                  tab.textColor = UIColor.whiteColor;
+                  tab.font = [UIFont boldSystemFontOfSize:13];
+
+                  [VSTPanel addSubview:tab];
+
+                  VSTCodeLabel = [[UILabel alloc]
+                      initWithFrame:CGRectMake(14, 80, width - 28, 28)];
+
+                  VSTCodeLabel.textColor = [UIColor colorWithWhite:0.88 alpha:1];
+                  VSTCodeLabel.font = [UIFont systemFontOfSize:10];
+                  VSTCodeLabel.numberOfLines = 1;
+                  VSTCodeLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+
+                  [VSTPanel addSubview:VSTCodeLabel];
+
+                  [self refreshCodeLabel];
+
+                  VSTButton(
+                      VSTPanel,
+                      @"1. Auto Nhập Ảnh Vào Các Lớp Hình Ảnh",
+                      114,
+                      @selector(feature1),
+                      self
+                  );
+
+                  VSTButton(
+                      VSTPanel,
+                      @"2. Hiển Thị Code Gần Nhất Từng Nhập",
+                      162,
+                      @selector(refreshCodeLabel),
+                      self
+                  );
+
+                  VSTButton(
+                      VSTPanel,
+                      @"3. Auto Chia Beat Nhạc Thông Minh",
+                      210,
+                      @selector(feature3),
+                      self
+                  );
+
+                  VSTButton(
+                      VSTPanel,
+                      @"4. Auto Nhập Code Và Ảnh Vào Các Phân Cảnh",
+                      258,
+                      @selector(feature4),
+                      self
+                  );
+
+                  VSTStatus = [[UILabel alloc]
+                      initWithFrame:CGRectMake(14, 304, width - 28, 20)];
+
+                  VSTStatus.text = @"Sẵn sàng";
+                  VSTStatus.textColor = [UIColor colorWithWhite:0.72 alpha:1];
+                  VSTStatus.font = [UIFont systemFontOfSize:10];
+                  VSTStatus.textAlignment = NSTextAlignmentCenter;
+
+                  [VSTPanel addSubview:VSTStatus];
+
+                  [VSTWindow makeKeyAndVisible];
               });
           }
 
           - (void)togglePanel {
-              VSTPanel.hidden=!VSTPanel.hidden;
+              VSTPanel.hidden = !VSTPanel.hidden;
           }
 
-          - (void)dragBubble:(UIPanGestureRecognizer *)g {
-              UIView *v=g.view;
-              CGPoint p=[g translationInView:v.superview];
-              v.center=CGPointMake(v.center.x+p.x,v.center.y+p.y);
-              [g setTranslation:CGPointZero inView:v.superview];
+          - (void)dragBubble:(UIPanGestureRecognizer *)gesture {
+              UIView *view = gesture.view;
+
+              CGPoint point = [gesture translationInView:view.superview];
+
+              view.center = CGPointMake(
+                  view.center.x + point.x,
+                  view.center.y + point.y
+              );
+
+              [gesture setTranslation:CGPointZero inView:view.superview];
           }
 
           - (void)refreshCodeLabel {
-              NSString *code=[[NSUserDefaults standardUserDefaults] stringForKey:VSTLastCodeKey];
-              VSTCodeLabel.text=code.length
-                  ? [NSString stringWithFormat:@"Code gần nhất: %@",code]
+              NSString *code =
+                  [[NSUserDefaults standardUserDefaults]
+                      stringForKey:VSTLastCodeKey];
+
+              VSTCodeLabel.text = code.length
+                  ? [NSString stringWithFormat:@"Code gần nhất: %@", code]
                   : @"Code gần nhất: Chưa có code được nhập";
           }
 
-          // FEATURE 1: distribute recent Photos images to existing image layers.
+          // FEATURE 1
+          // Scan existing image layers and attempt image insertion.
+
           - (void)feature1 {
-              if (VSTBusy) return;
-              VSTBusy=YES;
+              if (VSTBusy) {
+                  return;
+              }
 
-              PHAuthorizationStatus status=PHPhotoLibrary.authorizationStatus;
+              VSTBusy = YES;
 
-              void (^begin)(void)=^{
-                  id editor=VSTActiveEditor();
-                  id engine=VSTCall(editor,@"engine");
+              PHAuthorizationStatus status =
+                  PHPhotoLibrary.authorizationStatus;
+
+              void (^begin)(void) = ^{
+                  id editor = VSTActiveEditor();
+                  id engine = VSTCall(editor, @"engine");
 
                   if (!editor || !engine) {
-                      VSTSetStatus(@"Mở màn hình chỉnh sửa lớp hình ảnh trước");
-                      VSTBusy=NO;
+                      VSTSetStatus(@"Mở màn hình chỉnh sửa trước");
+                      VSTBusy = NO;
                       return;
                   }
 
-                  PHFetchOptions *opts=[PHFetchOptions new];
-                  opts.sortDescriptors=@[
-                      [NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]
-                  ];
-                  opts.predicate=[NSPredicate predicateWithFormat:
-                      @"mediaType == %d",PHAssetMediaTypeImage];
+                  PHFetchOptions *options = [PHFetchOptions new];
 
-                  PHFetchResult<PHAsset *> *assets=[PHAsset fetchAssetsWithOptions:opts];
+                  options.sortDescriptors = @[
+                      [NSSortDescriptor
+                          sortDescriptorWithKey:@"creationDate"
+                                      ascending:NO]
+                  ];
+
+                  options.predicate = [NSPredicate predicateWithFormat:
+                      @"mediaType == %d", PHAssetMediaTypeImage];
+
+                  PHFetchResult<PHAsset *> *assets =
+                      [PHAsset fetchAssetsWithOptions:options];
 
                   if (!assets.count) {
                       VSTSetStatus(@"Thư viện không có ảnh");
-                      VSTBusy=NO;
+                      VSTBusy = NO;
                       return;
                   }
 
-                  NSMutableArray *eligible=[NSMutableArray array];
+                  NSMutableArray *eligible = [NSMutableArray array];
 
-                  for (NSInteger i=0;i<40;i++) {
-                      id layer=((id(*)(id,SEL,NSInteger))objc_msgSend)(
-                          engine,NSSelectorFromString(@"layerAtLayerNum:"),i);
+                  SEL layerSelector = NSSelectorFromString(@"layerAtLayerNum:");
+                  SEL assetSelector = NSSelectorFromString(@"assetForLayer:");
+                  SEL typeSelector = NSSelectorFromString(@"layerTypeForLayer:");
 
-                      if (!layer || VSTBool(layer,@"isNullLayer")) continue;
+                  for (NSInteger index = 0; index < 40; index++) {
+                      id layer = ((id(*)(id, SEL, NSInteger))objc_msgSend)(
+                          engine,
+                          layerSelector,
+                          index
+                      );
 
-                      NSInteger type=0;
-                      SEL ts=NSSelectorFromString(@"layerType");
-                      if ([layer respondsToSelector:ts]) {
-                          type=((NSInteger(*)(id,SEL))objc_msgSend)(layer,ts);
+                      if (!layer || VSTBool(engine, @"isNullLayer:")) {
+                          continue;
                       }
 
-                      id asset=((id(*)(id,SEL,id))objc_msgSend)(
-                          engine,NSSelectorFromString(@"assetForLayer:"),layer);
+                      NSInteger type = 0;
 
-                      if (asset && type==0) {
-                          [eligible addObject:@{@"index":@(i),@"type":@(type)}];
+                      if ([engine respondsToSelector:typeSelector]) {
+                          type = ((NSInteger(*)(id, SEL, id))objc_msgSend)(
+                              engine,
+                              typeSelector,
+                              layer
+                          );
+                      }
+
+                      id asset = ((id(*)(id, SEL, id))objc_msgSend)(
+                          engine,
+                          assetSelector,
+                          layer
+                      );
+
+                      if (asset && type == 0) {
+                          [eligible addObject:@{
+                              @"index": @(index),
+                              @"type": @(type)
+                          }];
                       }
                   }
 
                   if (!eligible.count) {
-                      VSTSetStatus(@"Không tìm thấy lớp ảnh hợp lệ trong 40 lớp");
-                      VSTBusy=NO;
+                      VSTSetStatus(@"Không tìm thấy lớp ảnh phù hợp");
+                      VSTBusy = NO;
                       return;
                   }
 
-                  PHImageRequestOptions *ro=[PHImageRequestOptions new];
-                  ro.synchronous=YES;
-                  ro.networkAccessAllowed=YES;
-                  ro.deliveryMode=PHImageRequestOptionsDeliveryModeHighQualityFormat;
+                  PHImageRequestOptions *request = [PHImageRequestOptions new];
 
-                  __block NSUInteger done=0,failed=0;
-                  NSUInteger count=MIN(assets.count,eligible.count);
+                  request.synchronous = YES;
+                  request.networkAccessAllowed = YES;
+                  request.deliveryMode =
+                      PHImageRequestOptionsDeliveryModeHighQualityFormat;
 
-                  for (NSUInteger n=0;n<count;n++) {
-                      PHAsset *pa=assets[n];
-                      NSDictionary *target=eligible[n];
-                      __block UIImage *image=nil;
+                  NSUInteger count = MIN(assets.count, eligible.count);
+
+                  NSUInteger completed = 0;
+                  NSUInteger failed = 0;
+
+                  SEL setup = NSSelectorFromString(
+                      @"setupImage:layerNum:layerType:clearMask:"
+                  );
+
+                  if (![engine respondsToSelector:setup]) {
+                      VSTSetStatus(@"Không tìm thấy API nhập ảnh");
+                      VSTBusy = NO;
+                      return;
+                  }
+
+                  for (NSUInteger i = 0; i < count; i++) {
+                      PHAsset *photoAsset = assets[i];
+
+                      NSDictionary *target = eligible[i];
+
+                      __block UIImage *image = nil;
 
                       [[PHImageManager defaultManager]
-                          requestImageForAsset:pa
-                          targetSize:CGSizeMake(2048,2048)
-                          contentMode:PHImageContentModeAspectFit
-                          options:ro
-                          resultHandler:^(UIImage *result,NSDictionary *info) {
-                              if (![info[PHImageCancelledKey] boolValue] && !info[PHImageErrorKey]) {
-                                  image=result;
-                              }
-                          }];
+                          requestImageForAsset:photoAsset
+                                   targetSize:CGSizeMake(2048, 2048)
+                                  contentMode:PHImageContentModeAspectFit
+                                      options:request
+                                resultHandler:^(UIImage *result,
+                                                NSDictionary *info) {
+                          if (![info[PHImageCancelledKey] boolValue] &&
+                              !info[PHImageErrorKey]) {
+                              image = result;
+                          }
+                      }];
 
                       if (!image) {
                           failed++;
                           continue;
                       }
 
-                      SEL setup=NSSelectorFromString(
-                          @"setupImage:layerNum:layerType:clearMask:");
+                      NSInteger layerIndex =
+                          [target[@"index"] integerValue];
 
-                      if (![engine respondsToSelector:setup]) {
-                          failed++;
-                          continue;
-                      }
+                      NSInteger layerType =
+                          [target[@"type"] integerValue];
 
-                      NSInteger layerIndex=[target[@"index"] integerValue];
-                      NSInteger layerType=[target[@"type"] integerValue];
+                      id result = nil;
 
-                      id originalLayer=((id(*)(id,SEL,NSInteger))objc_msgSend)(
-                          engine,NSSelectorFromString(@"layerAtLayerNum:"),layerIndex);
+                      for (NSUInteger attempt = 0; attempt < 3; attempt++) {
+                          result = ((id(*)(id, SEL, id, NSInteger, NSInteger, BOOL))
+                              objc_msgSend)(
+                                  engine,
+                                  setup,
+                                  image,
+                                  layerIndex,
+                                  layerType,
+                                  YES
+                              );
 
-                      id originalAsset=originalLayer
-                          ? ((id(*)(id,SEL,id))objc_msgSend)(
-                              engine,NSSelectorFromString(@"assetForLayer:"),originalLayer)
-                          : nil;
+                          id checkLayer =
+                              ((id(*)(id, SEL, NSInteger))objc_msgSend)(
+                                  engine,
+                                  layerSelector,
+                                  layerIndex
+                              );
 
-                      id result=nil;
-                      id checkAsset=nil;
-
-                      for (NSUInteger attempt=0;attempt<3;attempt++) {
-                          result=((id(*)(id,SEL,id,NSInteger,NSInteger,BOOL))objc_msgSend)(
-                              engine,setup,image,layerIndex,layerType,YES);
-
-                          id checkLayer=((id(*)(id,SEL,NSInteger))objc_msgSend)(
-                              engine,NSSelectorFromString(@"layerAtLayerNum:"),layerIndex);
-
-                          checkAsset=checkLayer
-                              ? ((id(*)(id,SEL,id))objc_msgSend)(
-                                  engine,NSSelectorFromString(@"assetForLayer:"),checkLayer)
+                          id checkAsset = checkLayer
+                              ? ((id(*)(id, SEL, id))objc_msgSend)(
+                                  engine,
+                                  assetSelector,
+                                  checkLayer
+                              )
                               : nil;
 
-                          if (result || (checkAsset && checkAsset!=originalAsset)) break;
+                          if (result || checkAsset) {
+                              break;
+                          }
                       }
 
-                      if (result || (checkAsset && checkAsset!=originalAsset)) {
-                          done++;
+                      if (result) {
+                          completed++;
                       } else {
                           failed++;
                       }
                   }
 
                   VSTSetStatus([NSString stringWithFormat:
-                      @"Đã xử lý %lu/%lu lớp • lỗi %lu",
-                      (unsigned long)done,(unsigned long)count,(unsigned long)failed]);
+                      @"Đã nhập %lu ảnh • lỗi %lu",
+                      (unsigned long)completed,
+                      (unsigned long)failed]);
 
-                  VSTBusy=NO;
+                  VSTBusy = NO;
               };
 
-              if (status==PHAuthorizationStatusAuthorized ||
-                  status==PHAuthorizationStatusLimited) {
+              if (status == PHAuthorizationStatusAuthorized ||
+                  status == PHAuthorizationStatusLimited) {
                   begin();
               } else {
-                  [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelReadWrite
-                      handler:^(PHAuthorizationStatus s) {
-                          if (s==PHAuthorizationStatusAuthorized ||
-                              s==PHAuthorizationStatusLimited) {
-                              dispatch_async(dispatch_get_main_queue(),begin);
-                          } else {
-                              VSTSetStatus(@"Chưa cấp quyền Ảnh");
-                              VSTBusy=NO;
-                          }
-                      }];
+                  [PHPhotoLibrary requestAuthorizationForAccessLevel:
+                      PHAccessLevelReadWrite
+                      handler:^(PHAuthorizationStatus newStatus) {
+                      if (newStatus == PHAuthorizationStatusAuthorized ||
+                          newStatus == PHAuthorizationStatusLimited) {
+                          dispatch_async(dispatch_get_main_queue(), begin);
+                      } else {
+                          VSTSetStatus(@"Chưa cấp quyền Ảnh");
+                          VSTBusy = NO;
+                      }
+                  }];
               }
           }
 
-          // FEATURE 3: split the current scene using native detected beat timestamps.
+          // FEATURE 3
+          // Obtain beat positions from the native timeline beat API.
+
           - (void)feature3 {
-              if (VSTBusy) return;
-              VSTBusy=YES;
-
-              id editor=VSTActiveEditor();
-              id project=VSTActiveProject();
-              UIView *splitView=VSTFindView(VSTTopController().view,@"MultiSplitView");
-
-              if (!editor || !splitView) {
-                  VSTSetStatus(@"Mở màn hình chỉnh sửa và công cụ chia beat trong timeline trước");
-                  VSTBusy=NO;
+              if (VSTBusy) {
                   return;
               }
 
-              NSArray *beats=nil;
-              id timeline=nil;
+              VSTBusy = YES;
+
+              UIView *root = VSTTopController().view;
+
+              UIView *splitView = VSTFindView(root, @"MultiSplitView");
+
+              if (!splitView) {
+                  VSTSetStatus(@"Không tìm thấy MultiSplitView");
+                  VSTBusy = NO;
+                  return;
+              }
+
+              id timeline = nil;
 
               @try {
-                  timeline=[splitView valueForKey:@"timeline"];
-              } @catch (__unused NSException *e) {}
+                  timeline = [splitView valueForKey:@"timeline"];
+              } @catch (__unused NSException *exception) {
+                  timeline = nil;
+              }
 
-              SEL beatTimesSel=NSSelectorFromString(@"beatTimesForTimeline:");
+              NSArray *beats = nil;
 
-              if (timeline && [splitView respondsToSelector:beatTimesSel]) {
-                  beats=((id(*)(id,SEL,id))objc_msgSend)(splitView,beatTimesSel,timeline);
+              SEL beatSelector =
+                  NSSelectorFromString(@"beatTimesForTimeline:");
+
+              if (timeline && [splitView respondsToSelector:beatSelector]) {
+                  beats = ((id(*)(id, SEL, id))objc_msgSend)(
+                      splitView,
+                      beatSelector,
+                      timeline
+                  );
               }
 
               if (![beats isKindOfClass:NSArray.class] || !beats.count) {
-                  SEL beatsSel=NSSelectorFromString(@"beatsForScene");
-                  if ([splitView respondsToSelector:beatsSel]) {
-                      beats=((id(*)(id,SEL))objc_msgSend)(splitView,beatsSel);
-                  }
-              }
-
-              if (![beats isKindOfClass:NSArray.class] || !beats.count) {
-                  VSTSetStatus(@"Không tìm thấy beat thực tế của bài nhạc");
-                  VSTBusy=NO;
+                  VSTSetStatus(@"Không lấy được beat từ timeline");
+                  VSTBusy = NO;
                   return;
               }
 
-              NSUInteger sceneIndex=((NSUInteger(*)(id,SEL))objc_msgSend)(
-                  editor,NSSelectorFromString(@"navSceneIndex"));
-
-              NSMutableArray *times=[NSMutableArray array];
+              NSMutableArray *splitTimes = [NSMutableArray array];
 
               for (id beat in beats) {
-                  if ([beat isKindOfClass:NSNumber.class]) {
-                      double seconds=[beat doubleValue];
-                      if (isfinite(seconds) && seconds>0) {
-                          [times addObject:[NSValue valueWithCMTime:
-                              CMTimeMakeWithSeconds(seconds,600)]];
-                      }
-                  } else if ([beat isKindOfClass:NSValue.class]) {
-                      const char *t=[beat objCType];
-                      if (strstr(t,"{?=qiIq}") || strstr(t,"CMTime")) {
-                          CMTime cm=kCMTimeZero;
-                          [beat getValue:&cm];
-
-                          if (CMTIME_IS_VALID(cm) && CMTIME_IS_NUMERIC(cm) && cm.value>0) {
-                              [times addObject:[NSValue valueWithCMTime:cm]];
-                          }
-                      }
+                  if (![beat isKindOfClass:NSNumber.class]) {
+                      continue;
                   }
+
+                  double seconds = [beat doubleValue];
+
+                  if (!isfinite(seconds) || seconds <= 0) {
+                      continue;
+                  }
+
+                  [splitTimes addObject:
+                      [NSValue valueWithCMTime:
+                          CMTimeMakeWithSeconds(seconds, 600)]];
               }
 
-              SEL multi=NSSelectorFromString(
-                  @"multiSplitSceneAtIndex:times:progressView:completion:");
-
-              if (!project || ![project respondsToSelector:multi] || !times.count) {
-                  VSTSetStatus(@"Không gọi được bộ chia scene của project");
-                  VSTBusy=NO;
+              if (!splitTimes.count) {
+                  VSTSetStatus(@"Không có mốc beat hợp lệ");
+                  VSTBusy = NO;
                   return;
               }
 
-              id progress=nil;
+              SEL insertSelector = NSSelectorFromString(@"insertSplitTime:");
 
-              ((void(*)(id,SEL,NSUInteger,id,id,id))objc_msgSend)(
-                  project,multi,sceneIndex,times,progress,
-                  ^(id result) {
-                      dispatch_async(dispatch_get_main_queue(), ^{
-                          VSTSetStatus([NSString stringWithFormat:
-                              @"Đã gửi %lu mốc beat thật vào scene %lu",
-                              (unsigned long)times.count,(unsigned long)sceneIndex]);
-                          VSTBusy=NO;
-                      });
-                  });
+              if (![splitView respondsToSelector:insertSelector]) {
+                  VSTSetStatus(@"Không tìm thấy API chèn điểm chia");
+                  VSTBusy = NO;
+                  return;
+              }
+
+              NSUInteger inserted = 0;
+
+              for (NSValue *value in splitTimes) {
+                  CMTime time = kCMTimeZero;
+
+                  [value getValue:&time];
+
+                  SEL canSplit = NSSelectorFromString(@"canSplitAt:");
+
+                  if ([splitView respondsToSelector:canSplit]) {
+                      BOOL allowed = ((BOOL(*)(id, SEL, CMTime))objc_msgSend)(
+                          splitView,
+                          canSplit,
+                          time
+                      );
+
+                      if (!allowed) {
+                          continue;
+                      }
+                  }
+
+                  ((void(*)(id, SEL, CMTime))objc_msgSend)(
+                      splitView,
+                      insertSelector,
+                      time
+                  );
+
+                  inserted++;
+              }
+
+              VSTSetStatus([NSString stringWithFormat:
+                  @"Đã gửi %lu mốc beat vào timeline",
+                  (unsigned long)inserted]);
+
+              VSTBusy = NO;
           }
 
-          // FEATURE 4: pair a generated QR image and a Photos image per target scene.
+          // FEATURE 4
+          // Generate a QR image and pair it with a selected photo for scenes.
+
           - (void)feature4 {
-              UIAlertController *a=[UIAlertController
-                  alertControllerWithTitle:@"Auto Nhập Code Và Ảnh Vào Các Phân Cảnh"
-                  message:@"Code QR sẽ được tạo tự động và ghép với ảnh trong thư viện vào từng scene đã chọn."
-                  preferredStyle:UIAlertControllerStyleAlert];
+              UIAlertController *alert =
+                  [UIAlertController
+                      alertControllerWithTitle:
+                          @"Auto Nhập Code Và Ảnh Vào Các Phân Cảnh"
+                      message:
+                          @"Nhập code và phạm vi scene cần xử lý."
+                      preferredStyle:UIAlertControllerStyleAlert];
 
-              [a addTextFieldWithConfigurationHandler:^(UITextField *f) {
-                  f.placeholder=@"Code QR";
-                  f.autocapitalizationType=UITextAutocapitalizationTypeNone;
+              [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+                  field.placeholder = @"Code QR";
+                  field.autocapitalizationType =
+                      UITextAutocapitalizationTypeNone;
               }];
 
-              [a addTextFieldWithConfigurationHandler:^(UITextField *f) {
-                  f.placeholder=@"Scene bắt đầu (0-based)";
-                  f.keyboardType=UIKeyboardTypeNumberPad;
-                  f.text=@"0";
+              [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+                  field.placeholder = @"Scene bắt đầu (0-based)";
+                  field.keyboardType = UIKeyboardTypeNumberPad;
+                  field.text = @"0";
               }];
 
-              [a addTextFieldWithConfigurationHandler:^(UITextField *f) {
-                  f.placeholder=@"Scene kết thúc (0-based)";
-                  f.keyboardType=UIKeyboardTypeNumberPad;
-                  f.text=@"0";
+              [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+                  field.placeholder = @"Scene kết thúc (0-based)";
+                  field.keyboardType = UIKeyboardTypeNumberPad;
+                  field.text = @"0";
               }];
 
-              [a addTextFieldWithConfigurationHandler:^(UITextField *f) {
-                  f.placeholder=@"Scene offset";
-                  f.keyboardType=UIKeyboardTypeNumberPad;
-                  f.text=@"0";
+              [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+                  field.placeholder = @"Scene offset";
+                  field.keyboardType = UIKeyboardTypeNumberPad;
+                  field.text = @"0";
               }];
 
-              [a addAction:[UIAlertAction actionWithTitle:@"Hủy"
-                  style:UIAlertActionStyleCancel handler:nil]];
+              [alert addAction:
+                  [UIAlertAction actionWithTitle:@"Hủy"
+                                           style:UIAlertActionStyleCancel
+                                         handler:nil]];
 
-              [a addAction:[UIAlertAction actionWithTitle:@"Chạy"
-                  style:UIAlertActionStyleDefault
-                  handler:^(UIAlertAction *act) {
+              [alert addAction:
+                  [UIAlertAction actionWithTitle:@"Chạy"
+                                           style:UIAlertActionStyleDefault
+                                         handler:^(UIAlertAction *action) {
 
-                  NSArray *f=a.textFields;
-                  NSString *code=[f[0].text stringByTrimmingCharactersInSet:
-                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                  NSArray *fields = alert.textFields;
 
-                  NSInteger start=[f[1].text integerValue];
-                  NSInteger end=[f[2].text integerValue];
-                  NSInteger offset=[f[3].text integerValue];
+                  NSString *code = [fields[0].text
+                      stringByTrimmingCharactersInSet:
+                          NSCharacterSet.whitespaceAndNewlineCharacterSet];
 
-                  id project=VSTActiveProject();
+                  NSInteger start = [fields[1].text integerValue];
+                  NSInteger end = [fields[2].text integerValue];
+                  NSInteger offset = [fields[3].text integerValue];
 
-                  NSUInteger sceneCount=project
-                      ? ((NSUInteger(*)(id,SEL))objc_msgSend)(
-                          project,NSSelectorFromString(@"sceneCount"))
-                      : 0;
+                  id project = VSTActiveProject();
 
-                  NSInteger targetStart=start+offset;
-                  NSInteger targetEnd=end+offset;
-
-                  if (!code.length || !project || start<0 || end<start ||
-                      (NSUInteger)end>=sceneCount || targetStart<0 ||
-                      (NSUInteger)targetEnd>=sceneCount) {
-                      VSTSetStatus(@"Code hoặc phạm vi scene/offset không hợp lệ");
+                  if (!project || !code.length || start < 0 ||
+                      end < start) {
+                      VSTSetStatus(@"Thông tin nhập không hợp lệ");
                       return;
                   }
 
-                  PHAuthorizationStatus photoAuth=
-                      [PHPhotoLibrary authorizationStatusForAccessLevel:PHAccessLevelReadWrite];
+                  NSUInteger sceneCount =
+                      ((NSUInteger(*)(id, SEL))objc_msgSend)(
+                          project,
+                          NSSelectorFromString(@"sceneCount")
+                      );
 
-                  if (photoAuth!=PHAuthorizationStatusAuthorized &&
-                      photoAuth!=PHAuthorizationStatusLimited) {
-                      [PHPhotoLibrary requestAuthorizationForAccessLevel:PHAccessLevelReadWrite
-                          handler:^(PHAuthorizationStatus status) {
-                              dispatch_async(dispatch_get_main_queue(), ^{
-                                  VSTSetStatus(
-                                      (status==PHAuthorizationStatusAuthorized ||
-                                       status==PHAuthorizationStatusLimited)
-                                      ? @"Đã cấp quyền Ảnh — nhấn chức năng 4 lần nữa"
-                                      : @"Chưa cấp quyền truy cập Ảnh");
-                              });
-                          }];
+                  NSInteger targetStart = start + offset;
+                  NSInteger targetEnd = end + offset;
+
+                  if (targetStart < 0 ||
+                      targetEnd < targetStart ||
+                      (NSUInteger)targetEnd >= sceneCount) {
+                      VSTSetStatus(@"Scene offset vượt phạm vi project");
                       return;
                   }
 
-                  Class managerClass=NSClassFromString(@"QRCodeManager");
-                  SEL shared=NSSelectorFromString(@"sharedInstance");
+                  Class qrClass = NSClassFromString(@"QRCodeManager");
 
-                  id manager=managerClass && [managerClass respondsToSelector:shared]
-                      ? ((id(*)(id,SEL))objc_msgSend)(managerClass,shared)
+                  SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
+
+                  id qrManager = qrClass &&
+                      [qrClass respondsToSelector:sharedSelector]
+                      ? ((id(*)(id, SEL))objc_msgSend)(
+                          qrClass,
+                          sharedSelector
+                      )
                       : nil;
 
-                  SEL valid=NSSelectorFromString(@"validQRCheck:");
+                  SEL validSelector = NSSelectorFromString(@"validQRCheck:");
 
-                  if ([manager respondsToSelector:valid] &&
-                      !((BOOL(*)(id,SEL,id))objc_msgSend)(manager,valid,code)) {
-                      VSTSetStatus(@"Code QR không hợp lệ với Video Star");
+                  if ([qrManager respondsToSelector:validSelector]) {
+                      BOOL valid = ((BOOL(*)(id, SEL, id))objc_msgSend)(
+                          qrManager,
+                          validSelector,
+                          code
+                      );
+
+                      if (!valid) {
+                          VSTSetStatus(@"Code QR không hợp lệ");
+                          return;
+                      }
+                  }
+
+                  CIQRCodeGenerator *generator =
+                      [CIQRCodeGenerator filterWithName:@"CIQRCodeGenerator"];
+
+                  [generator setValue:[code dataUsingEncoding:NSUTF8StringEncoding]
+                               forKey:@"inputMessage"];
+
+                  [generator setValue:@"M" forKey:@"inputCorrectionLevel"];
+
+                  CIImage *output = generator.outputImage;
+
+                  if (!output) {
+                      VSTSetStatus(@"Không tạo được QR");
                       return;
                   }
 
-                  SEL make=NSSelectorFromString(@"makeQRCodeImage:desc:icon:");
-                  UIImage *qr=nil;
+                  CGAffineTransform transform =
+                      CGAffineTransformMakeScale(8, 8);
 
-                  if ([manager respondsToSelector:make]) {
-                      qr=((id(*)(id,SEL,id,id,id))objc_msgSend)(manager,make,code,@"",nil);
-                  }
+                  CIImage *scaled = [output imageByApplyingTransform:transform];
 
-                  if (!qr) {
-                      VSTSetStatus(@"Không tạo được ảnh QR từ code");
+                  CIContext *context = [CIContext contextWithOptions:nil];
+
+                  CGImageRef cgImage =
+                      [context createCGImage:scaled fromRect:scaled.extent];
+
+                  if (!cgImage) {
+                      VSTSetStatus(@"Không tạo được ảnh QR");
                       return;
                   }
 
-                  PHFetchOptions *opts=[PHFetchOptions new];
-                  opts.sortDescriptors=@[
-                      [NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]
+                  UIImage *qrImage = [UIImage imageWithCGImage:cgImage];
+
+                  CGImageRelease(cgImage);
+
+                  PHFetchOptions *options = [PHFetchOptions new];
+
+                  options.sortDescriptors = @[
+                      [NSSortDescriptor
+                          sortDescriptorWithKey:@"creationDate"
+                                      ascending:NO]
                   ];
-                  opts.predicate=[NSPredicate predicateWithFormat:
-                      @"mediaType == %d",PHAssetMediaTypeImage];
 
-                  PHFetchResult<PHAsset *> *assets=[PHAsset fetchAssetsWithOptions:opts];
+                  options.predicate = [NSPredicate predicateWithFormat:
+                      @"mediaType == %d", PHAssetMediaTypeImage];
 
-                  NSUInteger needed=(NSUInteger)(end-start+1);
+                  PHFetchResult<PHAsset *> *assets =
+                      [PHAsset fetchAssetsWithOptions:options];
 
-                  if (assets.count<needed) {
-                      VSTSetStatus([NSString stringWithFormat:
-                          @"Cần %lu ảnh, thư viện chỉ có %lu",
-                          (unsigned long)needed,(unsigned long)assets.count]);
+                  NSUInteger needed = (NSUInteger)(end - start + 1);
+
+                  if (assets.count < needed) {
+                      VSTSetStatus(@"Không đủ ảnh trong thư viện");
                       return;
                   }
 
-                  PHImageRequestOptions *ro=[PHImageRequestOptions new];
-                  ro.synchronous=YES;
-                  ro.networkAccessAllowed=YES;
-                  ro.deliveryMode=PHImageRequestOptionsDeliveryModeHighQualityFormat;
+                  Class navClass =
+                      NSClassFromString(@"MultiLayerNavController");
 
-                  Class navClass=NSClassFromString(@"MultiLayerNavController");
-                  SEL init=NSSelectorFromString(@"initWithProject:sceneIndex:");
-                  SEL setup=NSSelectorFromString(@"setupImage:layerNum:layerType:clearMask:");
+                  SEL initializer =
+                      NSSelectorFromString(@"initWithProject:sceneIndex:");
 
-                  NSUInteger success=0,failed=0;
-                  NSMutableArray *retainedEditors=[NSMutableArray array];
+                  SEL setup =
+                      NSSelectorFromString(
+                          @"setupImage:layerNum:layerType:clearMask:"
+                      );
 
-                  for (NSInteger scene=targetStart;scene<=targetEnd;scene++) {
-                      PHAsset *pa=assets[(NSUInteger)(scene-targetStart)];
-                      __block UIImage *photo=nil;
+                  if (!navClass ||
+                      ![navClass instancesRespondToSelector:initializer]) {
+                      VSTSetStatus(@"Không tạo được editor cho scene");
+                      return;
+                  }
+
+                  PHImageRequestOptions *request = [PHImageRequestOptions new];
+
+                  request.synchronous = YES;
+                  request.networkAccessAllowed = YES;
+                  request.deliveryMode =
+                      PHImageRequestOptionsDeliveryModeHighQualityFormat;
+
+                  NSUInteger success = 0;
+                  NSUInteger failed = 0;
+
+                  NSMutableArray *editors = [NSMutableArray array];
+
+                  for (NSInteger scene = targetStart;
+                       scene <= targetEnd;
+                       scene++) {
+
+                      NSUInteger assetIndex =
+                          (NSUInteger)(scene - targetStart);
+
+                      PHAsset *photoAsset = assets[assetIndex];
+
+                      __block UIImage *photo = nil;
 
                       [[PHImageManager defaultManager]
-                          requestImageForAsset:pa
-                          targetSize:CGSizeMake(2048,2048)
-                          contentMode:PHImageContentModeAspectFit
-                          options:ro
-                          resultHandler:^(UIImage *im,NSDictionary *info) {
-                              if (![info[PHImageCancelledKey] boolValue] &&
-                                  !info[PHImageErrorKey]) {
-                                  photo=im;
-                              }
-                          }];
+                          requestImageForAsset:photoAsset
+                                   targetSize:CGSizeMake(2048, 2048)
+                                  contentMode:PHImageContentModeAspectFit
+                                      options:request
+                                resultHandler:^(UIImage *image,
+                                                NSDictionary *info) {
+                          if (![info[PHImageCancelledKey] boolValue] &&
+                              !info[PHImageErrorKey]) {
+                              photo = image;
+                          }
+                      }];
 
-                      if (!photo || !navClass || ![navClass instancesRespondToSelector:init]) {
+                      if (!photo) {
                           failed++;
                           continue;
                       }
 
-                      id nav=((id(*)(id,SEL,id,NSUInteger))objc_msgSend)(
-                          [navClass alloc],init,project,(NSUInteger)scene);
+                      id editor = ((id(*)(id, SEL, id, NSUInteger))objc_msgSend)(
+                          [navClass alloc],
+                          initializer,
+                          project,
+                          (NSUInteger)scene
+                      );
 
-                      if ([nav respondsToSelector:@selector(loadViewIfNeeded)]) {
-                          [nav loadViewIfNeeded];
+                      if (!editor) {
+                          failed++;
+                          continue;
                       }
 
-                      if (nav) [retainedEditors addObject:nav];
+                      [editors addObject:editor];
 
-                      id engine=VSTCall(nav,@"engine");
+                      if ([editor respondsToSelector:
+                          @selector(loadViewIfNeeded)]) {
+                          [editor loadViewIfNeeded];
+                      }
+
+                      id engine = VSTCall(editor, @"engine");
 
                       if (!engine || ![engine respondsToSelector:setup]) {
                           failed++;
                           continue;
                       }
 
-                      id first=((id(*)(id,SEL,id,NSInteger,NSInteger,BOOL))objc_msgSend)(
-                          engine,setup,photo,0,0,YES);
+                      id photoResult =
+                          ((id(*)(id, SEL, id, NSInteger, NSInteger, BOOL))
+                              objc_msgSend)(
+                                  engine,
+                                  setup,
+                                  photo,
+                                  0,
+                                  0,
+                                  YES
+                              );
 
-                      id second=((id(*)(id,SEL,id,NSInteger,NSInteger,BOOL))objc_msgSend)(
-                          engine,setup,qr,1,0,YES);
+                      id qrResult =
+                          ((id(*)(id, SEL, id, NSInteger, NSInteger, BOOL))
+                              objc_msgSend)(
+                                  engine,
+                                  setup,
+                                  qrImage,
+                                  1,
+                                  0,
+                                  YES
+                              );
 
-                      id layer0=((id(*)(id,SEL,NSInteger))objc_msgSend)(
-                          engine,NSSelectorFromString(@"layerAtLayerNum:"),0);
-
-                      id layer1=((id(*)(id,SEL,NSInteger))objc_msgSend)(
-                          engine,NSSelectorFromString(@"layerAtLayerNum:"),1);
-
-                      id asset0=layer0
-                          ? ((id(*)(id,SEL,id))objc_msgSend)(
-                              engine,NSSelectorFromString(@"assetForLayer:"),layer0)
-                          : nil;
-
-                      id asset1=layer1
-                          ? ((id(*)(id,SEL,id))objc_msgSend)(
-                              engine,NSSelectorFromString(@"assetForLayer:"),layer1)
-                          : nil;
-
-                      if ((asset0 || first) && (asset1 || second)) {
+                      if (photoResult && qrResult) {
                           success++;
                       } else {
                           failed++;
                       }
                   }
 
-                  SEL save=NSSelectorFromString(@"saveToPlist");
-                  if ([project respondsToSelector:save]) {
-                      ((void(*)(id,SEL))objc_msgSend)(project,save);
-                  }
+                  [[NSUserDefaults standardUserDefaults]
+                      setObject:code
+                         forKey:VSTLastCodeKey];
 
-                  [[NSUserDefaults standardUserDefaults] setObject:code forKey:VSTLastCodeKey];
+                  NSData *imageData = UIImagePNGRepresentation(qrImage);
 
-                  NSData *png=UIImagePNGRepresentation(qr);
-                  if (png) {
-                      [[NSUserDefaults standardUserDefaults] setObject:png forKey:VSTLastCodeImageKey];
+                  if (imageData) {
+                      [[NSUserDefaults standardUserDefaults]
+                          setObject:imageData
+                             forKey:VSTLastCodeImageKey];
                   }
 
                   [self refreshCodeLabel];
 
                   VSTSetStatus([NSString stringWithFormat:
-                      @"Hoàn tất ghép scene: %lu thành công, %lu lỗi",
-                      (unsigned long)success,(unsigned long)failed]);
+                      @"Scene thành công: %lu • lỗi: %lu",
+                      (unsigned long)success,
+                      (unsigned long)failed]);
+
               }]];
 
-              [VSTTopController() presentViewController:a animated:YES completion:nil];
+              [VSTTopController() presentViewController:alert
+                                               animated:YES
+                                             completion:nil];
           }
+
           @end
 
           %hook QRCodeManager
+
           - (void)selectedCode:(id)code withImageData:(NSData *)imageData {
               %orig;
 
-              NSString *s=[code isKindOfClass:NSString.class]
+              NSString *value = [code isKindOfClass:NSString.class]
                   ? code
-                  : ([code respondsToSelector:@selector(description)] ? [code description] : nil);
+                  : ([code respondsToSelector:@selector(description)]
+                      ? [code description]
+                      : nil);
 
-              if (s.length) {
-                  [[NSUserDefaults standardUserDefaults] setObject:s forKey:VSTLastCodeKey];
+              if (value.length) {
+                  [[NSUserDefaults standardUserDefaults]
+                      setObject:value
+                         forKey:VSTLastCodeKey];
               }
 
               if ([imageData isKindOfClass:NSData.class]) {
-                  [[NSUserDefaults standardUserDefaults] setObject:imageData
-                      forKey:VSTLastCodeImageKey];
+                  [[NSUserDefaults standardUserDefaults]
+                      setObject:imageData
+                         forKey:VSTLastCodeImageKey];
               }
 
-              [[VSTController shared] performSelectorOnMainThread:
-                  @selector(refreshCodeLabel) withObject:nil waitUntilDone:NO];
+              [[VSTController shared]
+                  performSelectorOnMainThread:@selector(refreshCodeLabel)
+                                   withObject:nil
+                                waitUntilDone:NO];
           }
+
           %end
 
           %ctor {
               @autoreleasepool {
                   if (![NSBundle.mainBundle.bundleIdentifier
-                      isEqualToString:@"com.frontierdesign.videostar"]) return;
+                      isEqualToString:@"com.frontierdesign.videostar"]) {
+                      return;
+                  }
 
                   [[NSNotificationCenter defaultCenter]
                       addObserverForName:UIApplicationDidBecomeActiveNotification
-                      object:nil
-                      queue:NSOperationQueue.mainQueue
-                      usingBlock:^(NSNotification *n) {
-                          dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                              (int64_t)(1.5*NSEC_PER_SEC)),
-                              dispatch_get_main_queue(), ^{
-                                  [[VSTController shared] show];
-                              });
-                      }];
+                                  object:nil
+                                   queue:NSOperationQueue.mainQueue
+                              usingBlock:^(NSNotification *notification) {
 
-                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                      (int64_t)(3*NSEC_PER_SEC)),
+                      dispatch_after(
+                          dispatch_time(DISPATCH_TIME_NOW,
+                              (int64_t)(1.5 * NSEC_PER_SEC)),
+                          dispatch_get_main_queue(), ^{
+                              [[VSTController shared] show];
+                          }
+                      );
+                  }];
+
+                  dispatch_after(
+                      dispatch_time(DISPATCH_TIME_NOW,
+                          (int64_t)(3 * NSEC_PER_SEC)),
                       dispatch_get_main_queue(), ^{
                           [[VSTController shared] show];
-                      });
+                      }
+                  );
               }
           }
           SOURCE
@@ -877,16 +1240,31 @@ jobs:
         run: |
           export THEOS="$HOME/theos"
           export THEOS_PACKAGE_SCHEME=rootless
+
           make package FINALPACKAGE=1
-          mkdir -p "$GITHUB_WORKSPACE/output"
+
+          mkdir -p output
+
           DEB="$(find packages -maxdepth 1 -name '*.deb' | sort | tail -n 1)"
-          test -n "$DEB"
-          dpkg-deb -x "$DEB" "$GITHUB_WORKSPACE/extracted"
-          DYLIB="$(find "$GITHUB_WORKSPACE/extracted" -name 'VideoStarTool.dylib' | head -n 1)"
-          test -n "$DYLIB"
-          cp "$DYLIB" "$GITHUB_WORKSPACE/output/VideoStarTool.dylib"
-          cp "$DEB" "$GITHUB_WORKSPACE/output/VideoStarTool-rootless.deb"
-          file "$GITHUB_WORKSPACE/output/VideoStarTool.dylib"
+
+          if [ -z "$DEB" ]; then
+            echo "ERROR: Package was not generated"
+            exit 1
+          fi
+
+          dpkg-deb -x "$DEB" extracted
+
+          DYLIB="$(find extracted -name 'VideoStarTool.dylib' | head -n 1)"
+
+          if [ -z "$DYLIB" ]; then
+            echo "ERROR: VideoStarTool.dylib not found"
+            exit 1
+          fi
+
+          cp "$DYLIB" output/VideoStarTool.dylib
+          cp "$DEB" output/VideoStarTool-rootless.deb
+
+          file output/VideoStarTool.dylib
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
